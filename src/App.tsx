@@ -1,35 +1,27 @@
 import { useState, useEffect } from 'react';
 import { ParkrunLocation, CalculationResult } from './types';
 import { calculateEquivalentTimes, secondsToTime, formatTimeDifference, timeToSeconds } from './utils/calculations';
-import courses from './data/courses.json';
-
-// Single source of truth for all course data
-const parkrunData = courses;
-
-// Global baseline median age grade calculated during analysis
-const globalMedianAgeGrade = parkrunData.reduce((sum, course) => {
-  const ageGrades = [];
-  // Collect all median age grades from all courses to find true average
-  for (let month = 0; month <= 12; month++) {
-    if (course.monthlyStats[month]?.ageGender['All']?.medianAgeGrade) {
-      ageGrades.push(course.monthlyStats[month].ageGender['All'].medianAgeGrade);
-    }
-  }
-  return sum + (ageGrades.length > 0 ? ageGrades.reduce((a,b) => a + b, 0) / ageGrades.length : 50.36);
-}, 0) / parkrunData.length;
+import { useDatabase } from './hooks/useDatabase';
+import { getAllCourses } from './utils/dbQueries';
 
 export default function App() {
-  const [parkruns] = useState<ParkrunLocation[]>(
-    [...parkrunData as ParkrunLocation[]].sort((a, b) => {
-      if (a.country === b.country) {
-        if (a.region === b.region) {
-          return a.name.localeCompare(b.name);
-        }
-        return a.region.localeCompare(b.region);
-      }
-      return a.country.localeCompare(b.country);
-    })
-  );
+  const { db, loading } = useDatabase();
+  const [parkruns, setParkruns] = useState<ParkrunLocation[]>([]);
+
+  useEffect(() => {
+    if (db) {
+      const courses = getAllCourses(db);
+      setParkruns(courses);
+    }
+  }, [db]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-xl text-gray-600">Loading parkrun database...</div>
+      </div>
+    );
+  }
   const [selectedParkrun, setSelectedParkrun] = useState<ParkrunLocation | null>(null);
   const [timeInput, setTimeInput] = useState<string>('25:00');
   const [selectedMonth, setSelectedMonth] = useState<number>(0);
