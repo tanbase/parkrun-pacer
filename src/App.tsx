@@ -7,6 +7,7 @@ import { getAllCourses } from './utils/dbQueries';
 export default function App() {
   const { db, loading } = useDatabase();
   const [parkruns, setParkruns] = useState<ParkrunLocation[]>([]);
+  const [selectedParkrun, setSelectedParkrun] = useState<ParkrunLocation | null>(null);
 
   useEffect(() => {
     if (db) {
@@ -22,7 +23,6 @@ export default function App() {
       </div>
     );
   }
-  const [selectedParkrun, setSelectedParkrun] = useState<ParkrunLocation | null>(null);
   const [timeInput, setTimeInput] = useState<string>('25:00');
   const [selectedMonth, setSelectedMonth] = useState<number>(0);
   const [results, setResults] = useState<CalculationResult[]>([]);
