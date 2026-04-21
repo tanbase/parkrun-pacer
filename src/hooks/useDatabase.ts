@@ -17,7 +17,7 @@ export function useDatabase() {
 
       // Load SQL.js WASM
       const SQL = await initSqlJs({
-        locateFile: (file: string) => `https://sql.js.org/dist/${file}`
+        locateFile: (file: string) => `/${file}`
       });
 
       // Fetch the database file
