@@ -1,0 +1,43 @@
+{
+  "name": "parkrun-pacer",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "preview": "vite preview",
+    "scrape": "node scripts/scrape-repository.js",
+    "analyse": "node scripts/analyse-results.js",
+    "update": "npm run scrape && npm run analyse"
+  },
+  "dependencies": {
+    "axios": "^1.15.0",
+    "cheerio": "^1.2.0",
+    "fs-extra": "^11.3.4",
+    "puppeteer": "^24.41.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@typescript-eslint/eslint-plugin": "^6.14.0",
+    "@typescript-eslint/parser": "^6.14.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.16",
+    "csv-parser": "^3.2.0",
+    "eslint": "^8.55.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5",
+    "jsdom": "^29.0.2",
+    "node-fetch": "^3.3.2",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.3.6",
+    "typescript": "^5.2.2",
+    "vite": "^5.0.8"
+  }
+}
