@@ -17,11 +17,11 @@ export function useDatabase() {
 
       // Load SQL.js WASM
       const SQL = await initSqlJs({
-        locateFile: (file: string) => `/${file}`
+        locateFile: (file: string) => import.meta.env.BASE_URL + file
       });
 
       // Fetch the database file
-      const buffer = await fetch('/parkrun.db').then(res => res.arrayBuffer());
+      const buffer = await fetch(import.meta.env.BASE_URL + 'parkrun.db').then(res => res.arrayBuffer());
       dbInstance = new SQL.Database(new Uint8Array(buffer));
       
       setDb(dbInstance);
