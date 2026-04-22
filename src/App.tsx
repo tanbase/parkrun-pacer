@@ -1,28 +1,44 @@
 import { useState, useEffect } from 'react';
 import { ParkrunLocation, CalculationResult } from './types';
 import { calculateEquivalentTimes, secondsToTime, formatTimeDifference, timeToSeconds } from './utils/calculations';
-import { useDatabase } from './hooks/useDatabase';
-import { getAllCourses } from './utils/dbQueries';
+import coursesData from './data/courses.json';
 
 export default function App() {
-  const { db, loading } = useDatabase();
   const [parkruns, setParkruns] = useState<ParkrunLocation[]>([]);
   const [selectedParkrun, setSelectedParkrun] = useState<ParkrunLocation | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Calculated global medians from actual dataset
+  const [globalMedianTime, setGlobalMedianTime] = useState(1680);
+  const [globalMedianAgeGrade, setGlobalMedianAgeGrade] = useState(62);
 
   useEffect(() => {
-    if (db) {
-      const courses = getAllCourses(db);
-      setParkruns(courses);
-    }
-  }, [db]);
+    // Load courses from static JSON file (not from database)
+    const courses = coursesData as ParkrunLocation[];
+    setParkruns(courses);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-xl text-gray-600">Loading parkrun database...</div>
-      </div>
-    );
-  }
+    // Calculate actual global medians from real data
+    const allMedianTimes: number[] = [];
+    const allMedianAges: number[] = [];
+
+    courses.forEach(course => {
+      const stats = course.monthlyStats[0] || course.monthlyStats[1];
+      if (stats?.medianTime) allMedianTimes.push(stats.medianTime);
+      if (stats?.ageGender?.All?.medianAgeGrade) allMedianAges.push(stats.ageGender.All.medianAgeGrade);
+    });
+
+    allMedianTimes.sort((a, b) => a - b);
+    allMedianAges.sort((a, b) => a - b);
+
+    const medianTime = allMedianTimes[Math.floor(allMedianTimes.length / 2)] || 1680;
+    const medianAge = allMedianAges[Math.floor(allMedianAges.length / 2)] || 62;
+
+    setGlobalMedianTime(medianTime);
+    setGlobalMedianAgeGrade(medianAge);
+
+    setLoading(false);
+  }, []);
+
   const [timeInput, setTimeInput] = useState<string>('25:00');
   const [selectedMonth, setSelectedMonth] = useState<number>(0);
   const [results, setResults] = useState<CalculationResult[]>([]);
@@ -104,6 +120,14 @@ export default function App() {
     }
   }, [selectedParkrun, timeInput, selectedMonth, selectedCategory, parkruns, useAgeGrade]);
 
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-xl text-gray-600">Loading parkrun database...</div>
+      </div>
+    );
+  }
+
   const handleSort = (column: string) => {
     if (sortBy === column) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
@@ -113,16 +137,24 @@ export default function App() {
     }
   };
 
-  const getDifficulty = (course) => {
+  const getDifficulty = (course: CalculationResult) => {
     if (useAgeGrade) {
       // Age Grade mode: use median age grade
-      return globalMedianAgeGrade / (course.parkrun.monthlyStats[selectedMonth]?.ageGender[selectedCategory]?.medianAgeGrade || course.parkrun.monthlyStats[0]?.ageGender[selectedCategory]?.medianAgeGrade || globalMedianAgeGrade);
+      const courseMedianAge = course.parkrun.monthlyStats[selectedMonth]?.ageGender[selectedCategory]?.medianAgeGrade || course.parkrun.monthlyStats[0]?.ageGender[selectedCategory]?.medianAgeGrade || globalMedianAgeGrade;
+      return globalMedianAgeGrade / courseMedianAge;
     } else {
       // Finishing Time mode: use median time
-      const globalMedianTime = 1680; // 28:00 average
       const courseMedianTime = course.parkrun.monthlyStats[selectedMonth]?.ageGender[selectedCategory]?.median || course.parkrun.monthlyStats[0]?.ageGender[selectedCategory]?.median || course.parkrun.monthlyStats[selectedMonth]?.medianTime || course.parkrun.monthlyStats[0]?.medianTime || globalMedianTime;
-      return globalMedianTime / courseMedianTime;
+      return courseMedianTime / globalMedianTime;
     }
+  };
+
+  const getCourseLocation = (course: CalculationResult) => {
+    // Handle both lat/lon and latitude/longitude property names
+    return {
+      latitude: course.parkrun.latitude ?? course.parkrun.lat,
+      longitude: course.parkrun.longitude ?? course.parkrun.lon
+    };
   };
 
   const sortResults = (results: CalculationResult[]) => {
@@ -374,13 +406,13 @@ export default function App() {
             <div className="flex flex-col">
               <label className="block text-sm font-medium text-gray-700 mb-1">Difficulty</label>
               <div className="flex items-center h-10">
-                <div className="w-full bg-gray-200 rounded-full h-3">
-                  <div 
-                    className="h-3 rounded-full bg-gradient-to-r from-green-400 via-yellow-400 to-red-500"
-                    style={{ width: `${Math.min(100, ((selectedParkrun?.difficultyFactor || 1) - 0.8) * 250)}%` }}
-                  ></div>
-                </div>
-                <span className="ml-2 text-base font-mono">{selectedParkrun ? (selectedParkrun.difficultyFactor * 100).toFixed(2) : ''}</span>
+                 <div className="w-full bg-gray-200 rounded-full h-3">
+                   <div 
+                     className="h-3 rounded-full bg-gradient-to-r from-green-400 via-yellow-400 to-red-500"
+                     style={{ width: `${Math.min(100, ((selectedParkrun ? getDifficulty({parkrun: selectedParkrun}) : 1) - 0.8) * 250)}%` }}
+                   ></div>
+                 </div>
+                 <span className="ml-2 text-base font-mono">{selectedParkrun ? (getDifficulty({parkrun: selectedParkrun}) * 100).toFixed(2) : ''}</span>
               </div>
             </div>
           </div>
@@ -546,7 +578,7 @@ export default function App() {
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
               <div className="bg-gray-50 rounded-lg p-3">
                 <div className="text-xs text-gray-500">Difficulty</div>
-                <div className="text-xl font-bold">{(selectedResult.parkrun.difficultyFactor * 100).toFixed(2)}</div>
+                <div className="text-xl font-bold">{(getDifficulty(selectedResult) * 100).toFixed(2)}</div>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
                 <div className="text-xs text-gray-500">Elevation</div>
