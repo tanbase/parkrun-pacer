@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import 'dotenv/config';
 import fs from 'fs-extra';
 import path from 'path';
 import * as cheerio from 'cheerio';
@@ -70,50 +71,61 @@ ${safeDescription}
 
   // 🔴 PRIMARY: Try Gemini API first
   if (USE_GEMINI) {
-    try {
-      console.log(`  📡 Gemini API request (Gemini 2.5 Flash)`);
-      
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 25000,
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.1,
-            responseMimeType: "application/json"
-          }
-        })
-      });
-
-      console.log(`  📡 Gemini response status: ${res.status} ${res.statusText}`);
-      
-      if (res.ok) {
-        const data = await res.json();
-        const content = data.candidates[0].content.parts[0].text;
-        console.log(`  📡 Gemini raw response:`, content);
-        
-        try {
-          const parsed = JSON.parse(content);
-          console.log(`  ✅ Gemini successfully parsed:`, parsed);
-          // Gemini free tier requires 4 second minimum delay between requests
-          await new Promise(r => setTimeout(r, 4000));
-          return parsed;
-        } catch (parseError) {
-          console.log(`  ❌ Gemini JSON parse failed:`, parseError.message);
-          console.log(`  ❌ Raw content was:`, content);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (attempt > 0) {
+          console.log(`  ⏳ Retrying Gemini after rate limit (attempt ${attempt+1}/2)`);
+          await new Promise(r => setTimeout(r, 65000));
         }
-      } else if (res.status === 429 || res.status === 403) {
-        // Rate limit hit or quota exhausted - disable Gemini for rest of run
-        console.log(`  ⚠️  Gemini quota/rate limit hit, falling back to Groq for all remaining courses`);
-        USE_GEMINI = false;
-      } else {
-        const errorBody = await res.text();
-        console.log(`  ❌ Gemini error response:`, errorBody);
+
+        console.log(`  📡 Gemini API request (Gemini 2.5 Flash)`);
+        
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 25000,
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.1,
+              responseMimeType: "application/json"
+            }
+          })
+        });
+
+        console.log(`  📡 Gemini response status: ${res.status} ${res.statusText}`);
+        
+        if (res.ok) {
+          const data = await res.json();
+          const content = data.candidates[0].content.parts[0].text;
+          console.log(`  📡 Gemini raw response:`, content);
+          
+          try {
+            const parsed = JSON.parse(content);
+            console.log(`  ✅ Gemini successfully parsed:`, parsed);
+            // Gemini free tier requires 62 second minimum delay between requests (April 2026)
+            await new Promise(r => setTimeout(r, 62000));
+            return parsed;
+          } catch (parseError) {
+            console.log(`  ❌ Gemini JSON parse failed:`, parseError.message);
+            console.log(`  ❌ Raw content was:`, content);
+            break;
+          }
+        } else if (res.status === 429) {
+          console.log(`  ⚠️  Gemini rate limit hit (429)`);
+          continue;
+        } else {
+          const errorBody = await res.text();
+          console.log(`  ❌ Gemini error response:`, errorBody);
+          break;
+        }
+      } catch (e) {
+        console.log(`  ⚠️  Gemini failed: ${e.message}`);
+        break;
       }
-    } catch (e) {
-      console.log(`  ⚠️  Gemini failed: ${e.message}`);
     }
+    
+    console.log(`  ⚠️  Gemini failed after 2 attempts, falling back to Groq`);
   }
 
   // 🟡 FALLBACK: Use Groq API if Gemini failed
