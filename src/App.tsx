@@ -259,7 +259,7 @@ export default function App() {
       </header>
 
       {/* Input Panel */}
-      <div className="sticky top-0 z-10 bg-white shadow-md border-b">
+      <div className="bg-white shadow-md border-b">
         <div className="max-w-6xl mx-auto px-4 py-3">
           <p className="text-gray-600 text-sm mb-2">Enter your time from any parkrun to calculate your expected finishing time at every other course</p>
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4" style={{ gridTemplateColumns: '2.5fr 1fr 1fr 1fr 1.5fr' }}>
