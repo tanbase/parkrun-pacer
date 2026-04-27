@@ -80,10 +80,61 @@ node scripts/enrich-courses.js
 
 ---
 
+## Technology Stack
+| Layer | Technology |
+|-------|------------|
+| Frontend | React 18 + TypeScript + Vite |
+| Styling | Tailwind CSS |
+| Database | SQLite + SQL.js (in-browser WASM) |
+| LLM APIs | Google Gemini 2.5 Flash, Groq Llama 3.3 70b |
+| GIS | OpenTopoData elevation API |
+| Parser | Cheerio |
+
+---
+
+## Key Architectural Decisions
+
+✅ **Client-side only architecture:**
+No backend server required. All calculations run entirely in browser. SQLite database file is loaded directly via WASM.
+
+✅ **Separate data processing pipeline:**
+All data enrichment is done offline via node.js scripts. Frontend only consumes pre-calculated static data.
+
+✅ **Single source of truth:**
+`courses.json` is the canonical database. All scripts modify this single file.
+
+---
+
+## Course Difficulty Calculation Logic
+
+### Elevation Profile Analysis
+1.  Extract full 5km KML path from Google Maps
+2.  Resample path to exactly 100 evenly spaced points
+3.  Fetch elevation for each point from OpenTopoData
+4.  Calculate elevation gain/loss by summing all positive/negative differentials between consecutive points
+5.  Remove noise and elevation anomalies
+
+### Course Comparison Formula
+Courses are ranked using normalized difficulty score:
+```
+Difficulty Score = (Elevation Gain * 2.2) + (Elevation Loss * 0.8)
+```
+
+All courses are benchmarked against:
+- 🔵 **Flat:** <30m total gain
+- 🟢 **Easy:** 30-60m gain
+- 🟡 **Moderate:** 60-100m gain
+- 🟠 **Hard:** 100-150m gain
+- 🔴 **Very Hard:** >150m gain
+
+Elevation gain is the single strongest predictor of finish time variance between parkruns.
+
+---
+
 ## Current State (27 April 2026)
 - ✅ All API keys properly secured
 - ✅ Rate limits updated to current Google restrictions
-- ✅ 7 courses fully enriched
+- ✅ 7 courses fully enriched with elevation and LLM descriptions
 - ✅ Database contains ~400 Australian parkrun courses
 
 ---
