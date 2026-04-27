@@ -18,6 +18,7 @@ export interface MonthlyStats {
   p50: number;
   p90: number;
   ageGender: {
+    [key: string]: AgeGenderStats | undefined;
     JM: AgeGenderStats;
     JW: AgeGenderStats;
     SM: AgeGenderStats;
@@ -30,6 +31,7 @@ export interface MonthlyStats {
     VW45: AgeGenderStats;
     VM50: AgeGenderStats;
     VW50: AgeGenderStats;
+    All?: AgeGenderStats;
   };
 }
 
@@ -41,9 +43,19 @@ export interface ParkrunLocation {
   region: string;
   lat?: number;
   lon?: number;
+  latitude?: number;
+  longitude?: number;
   elevation: number;
-  terrain: 'road' | 'tarmac' | 'trail' | 'grass' | 'gravel' | 'mixed';
+  elevationGain?: number;
+  elevationLoss?: number;
+  minElevation?: number;
+  maxElevation?: number;
+  elevationProfile?: number[];
+  coursePath?: [number, number][];
+  terrain: 'road' | 'tarmac' | 'trail' | 'grass' | 'gravel' | 'mixed' | 'unknown';
   courseDescription: string;
+  mapMid?: string;
+  kmlUrl?: string;
   totalEvents: number;
   totalRunners: number;
   difficultyFactor: number;

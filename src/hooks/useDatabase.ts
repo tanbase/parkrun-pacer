@@ -8,27 +8,49 @@ export function useDatabase() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let mounted = true;
+    const abortController = new AbortController();
+
     async function loadDatabase() {
       if (dbInstance) {
-        setDb(dbInstance);
-        setLoading(false);
+        if (mounted) {
+          setDb(dbInstance);
+          setLoading(false);
+        }
         return;
       }
 
-      // Load SQL.js WASM
-      const SQL = await initSqlJs({
-        locateFile: (file: string) => import.meta.env.BASE_URL + file
-      });
+      try {
+        // Load SQL.js WASM
+        const SQL = await initSqlJs({
+          locateFile: (file: string) => `/parkrun-pacer/${file}`
+        });
 
-      // Fetch the database file
-      const buffer = await fetch(import.meta.env.BASE_URL + 'parkrun.db').then(res => res.arrayBuffer());
-      dbInstance = new SQL.Database(new Uint8Array(buffer));
-      
-      setDb(dbInstance);
-      setLoading(false);
+        // Fetch the database file
+        const buffer = await fetch('/parkrun-pacer/parkrun.db', {
+          signal: abortController.signal
+        }).then(res => res.arrayBuffer());
+        
+        dbInstance = new SQL.Database(new Uint8Array(buffer));
+        
+        if (mounted) {
+          setDb(dbInstance);
+          setLoading(false);
+        }
+      } catch (err) {
+        if (mounted && err.name !== 'AbortError') {
+          console.error('Failed to load database:', err);
+          setLoading(false);
+        }
+      }
     }
 
     loadDatabase();
+
+    return () => {
+      mounted = false;
+      abortController.abort();
+    };
   }, []);
 
   return { db, loading };

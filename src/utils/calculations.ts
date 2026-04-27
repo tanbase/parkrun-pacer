@@ -4,11 +4,21 @@ import { ParkrunLocation, CalculationResult } from '../types';
  * Convert time string in HH:MM:SS format to total seconds
  */
 export function timeToSeconds(time: string): number {
+  if (!time || typeof time !== 'string') return 0;
+  
   const parts = time.split(':').map(Number);
+  
+  // Validate all parts are actual numbers
+  if (parts.some(isNaN)) return 0;
+  
   if (parts.length === 2) {
-    return parts[0] * 60 + parts[1];
+    return Math.max(0, parts[0] * 60 + parts[1]);
   }
-  return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 3) {
+    return Math.max(0, parts[0] * 3600 + parts[1] * 60 + parts[2]);
+  }
+  
+  return 0;
 }
 
 /**
@@ -45,8 +55,14 @@ export function formatTimeDifference(seconds: number): string {
  * Calculate percentile position of a time within a course distribution
  */
 export function calculatePercentile(time: number, course: ParkrunLocation, month: number = new Date().getMonth() + 1, category: string = 'All'): number {
+  // Input validation
+  if (!time || time <= 0 || !course) return 50;
+  
+  // Normalise month to 1-12 range
+  const normalisedMonth = ((month - 1) % 12) + 1;
+  
   // Handle courses with no stats data available
-  const stats = course.monthlyStats[month] || course.monthlyStats[1] || {
+  const stats = course.monthlyStats[normalisedMonth] || course.monthlyStats[1] || {
     fastestTime: 1200,
     p10: 1300,
     p50: 1500,
@@ -59,27 +75,33 @@ export function calculatePercentile(time: number, course: ParkrunLocation, month
     const catStats = stats.ageGender[category as keyof typeof stats.ageGender];
     
     if (time <= catStats.fastest) return 99;
-    if (time >= catStats.p90) return 1;
+    if (time >= catStats.p90) return 10;
     
     if (time <= catStats.p10) {
-      return 90 + 9 * (catStats.p10 - time) / (catStats.p10 - catStats.fastest);
+      const range = catStats.p10 - catStats.fastest;
+      return range > 0 ? 90 + 9 * (catStats.p10 - time) / range : 95;
     } else if (time <= catStats.p50) {
-      return 50 + 40 * (catStats.p50 - time) / (catStats.p50 - catStats.p10);
+      const range = catStats.p50 - catStats.p10;
+      return range > 0 ? 50 + 40 * (catStats.p50 - time) / range : 70;
     } else {
-      return 10 + 40 * (catStats.p90 - time) / (catStats.p90 - catStats.p50);
+      const range = catStats.p90 - catStats.p50;
+      return range > 0 ? 10 + 40 * (catStats.p90 - time) / range : 30;
     }
   }
   
   // Overall course distribution
   if (time <= stats.fastestTime) return 99;
-  if (time >= stats.p90) return 1;
+  if (time >= stats.p90) return 10;
   
   if (time <= stats.p10) {
-    return 90 + 9 * (stats.p10 - time) / (stats.p10 - stats.fastestTime);
+    const range = stats.p10 - stats.fastestTime;
+    return range > 0 ? 90 + 9 * (stats.p10 - time) / range : 95;
   } else if (time <= stats.p50) {
-    return 50 + 40 * (stats.p50 - time) / (stats.p50 - stats.p10);
+    const range = stats.p50 - stats.p10;
+    return range > 0 ? 50 + 40 * (stats.p50 - time) / range : 70;
   } else {
-    return 10 + 40 * (stats.p90 - time) / (stats.p90 - stats.p50);
+    const range = stats.p90 - stats.p50;
+    return range > 0 ? 10 + 40 * (stats.p90 - time) / range : 30;
   }
 }
 
@@ -87,8 +109,14 @@ export function calculatePercentile(time: number, course: ParkrunLocation, month
  * Find time at a given percentile for a course
  */
 export function getTimeAtPercentile(percentile: number, course: ParkrunLocation, month: number = new Date().getMonth() + 1, category: string = 'All'): number {
+  // Input validation
+  if (percentile <= 0 || percentile > 100 || !course) return 1500;
+  
+  // Normalise month to 1-12 range
+  const normalisedMonth = ((month - 1) % 12) + 1;
+  
   // Handle courses with no stats data available
-  const stats = course.monthlyStats[month] || course.monthlyStats[1] || {
+  const stats = course.monthlyStats[normalisedMonth] || course.monthlyStats[1] || {
     fastestTime: 1200,
     p10: 1300,
     p50: 1500,
@@ -101,25 +129,27 @@ export function getTimeAtPercentile(percentile: number, course: ParkrunLocation,
     const catStats = stats.ageGender[category as keyof typeof stats.ageGender];
     
     if (percentile >= 90) {
-      return catStats.fastest + (catStats.p10 - catStats.fastest) * (99 - percentile) / 9;
+      const range = catStats.p10 - catStats.fastest;
+      return range > 0 ? catStats.fastest + range * (99 - percentile) / 9 : catStats.fastest;
     } else if (percentile >= 50) {
-      return catStats.p10 + (catStats.p50 - catStats.p10) * (90 - percentile) / 40;
-    } else if (percentile >= 10) {
-      return catStats.p50 + (catStats.p90 - catStats.p50) * (50 - percentile) / 40;
+      const range = catStats.p50 - catStats.p10;
+      return range > 0 ? catStats.p10 + range * (90 - percentile) / 40 : catStats.p10;
     } else {
-      return catStats.p90 + (catStats.p90 * 1.1 - catStats.p90) * (10 - percentile) / 9;
+      const range = catStats.p90 - catStats.p50;
+      return range > 0 ? catStats.p50 + range * (50 - percentile) / 40 : catStats.p50;
     }
   }
   
   // Overall course distribution
   if (percentile >= 90) {
-    return stats.fastestTime + (stats.p10 - stats.fastestTime) * (99 - percentile) / 9;
+    const range = stats.p10 - stats.fastestTime;
+    return range > 0 ? stats.fastestTime + range * (99 - percentile) / 9 : stats.fastestTime;
   } else if (percentile >= 50) {
-    return stats.p10 + (stats.p50 - stats.p10) * (90 - percentile) / 40;
-  } else if (percentile >= 10) {
-    return stats.p50 + (stats.p90 - stats.p50) * (50 - percentile) / 40;
+    const range = stats.p50 - stats.p10;
+    return range > 0 ? stats.p10 + range * (90 - percentile) / 40 : stats.p10;
   } else {
-    return stats.p90 + (stats.p90 * 1.1 - stats.p90) * (10 - percentile) / 9;
+    const range = stats.p90 - stats.p50;
+    return range > 0 ? stats.p50 + range * (50 - percentile) / 40 : stats.p50;
   }
 }
 
@@ -136,7 +166,8 @@ export function calculateEquivalentTimes(
 ): CalculationResult[] {
   if (useAgeGrade) {
     // ✅ Age Grade mode: use universal performance percentile
-    // Difficulty is already normalised in the course difficulty factor
+    // Difficulty factor: <1.0 = harder course, >1.0 = easier course
+    // Ratio = target difficulty / source difficulty
     return allParkruns.map(target => {
       const ratio = target.difficultyFactor / sourceParkrun.difficultyFactor;
       const estimatedTime = target.id === sourceParkrun.id 
@@ -174,4 +205,41 @@ export function calculateEquivalentTimes(
       };
     }).sort((a, b) => (a.parkrun.difficultyFactor || 1.0) - (b.parkrun.difficultyFactor || 1.0));
   }
+}
+
+/**
+ * Encode coordinates into Google Maps polyline format
+ */
+export function encodePolyline(coordinates: [number, number][]): string {
+  let encoded = '';
+  let prevLat = 0;
+  let prevLng = 0;
+
+  for (const [lat, lng] of coordinates) {
+    const latValue = Math.round(lat * 1e5);
+    const lngValue = Math.round(lng * 1e5);
+    
+    const dLat = latValue - prevLat;
+    const dLng = lngValue - prevLng;
+    
+    prevLat = latValue;
+    prevLng = lngValue;
+
+    const encodeValue = (value: number) => {
+      let v = value < 0 ? ~(value << 1) : value << 1;
+      let result = '';
+      
+      while (v >= 0x20) {
+        result += String.fromCharCode((0x20 | (v & 0x1f)) + 63);
+        v >>= 5;
+      }
+      result += String.fromCharCode(v + 63);
+      return result;
+    };
+
+    encoded += encodeValue(dLat);
+    encoded += encodeValue(dLng);
+  }
+
+  return encoded;
 }

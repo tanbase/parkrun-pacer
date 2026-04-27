@@ -67,7 +67,7 @@ export function calculateAgeGrade(timeSeconds: number, age: number, gender: 'M' 
   const ageGrade = (ageStandard / timeSeconds) * 100;
   
   // Clamp to reasonable range
-  return Math.min(105, Math.max(0, ageGrade));
+  return Math.min(120, Math.max(0, ageGrade));
 }
 
 /**
