@@ -29,6 +29,14 @@ const args = process.argv.slice(2);
 const RUN_DESCRIPTION = args.includes('--description') || args.length === 0;
 const RUN_ELEVATION = args.includes('--elevation') || args.length === 0;
 const COURSE_ID = args.find((arg, idx) => idx > 0 && args[idx - 1] === '--course');
+const ELEVATION_SOURCE = args.find((arg, idx) => idx > 0 && args[idx - 1] === '--elevation-source');
+
+// Validate elevation source if provided
+if (ELEVATION_SOURCE && !['strava', 'earthengine', 'opentopo'].includes(ELEVATION_SOURCE)) {
+  console.error(`❌ Invalid elevation source: ${ELEVATION_SOURCE}`);
+  console.error(`Valid sources: strava, earthengine, opentopo`);
+  process.exit(1);
+}
 
 if (args.includes('--help') || args.includes('-h')) {
   console.log(`Usage: node enrich-courses.js [options]
@@ -37,13 +45,14 @@ Options:
   --description    Only run course description / terrain LLM parsing
   --elevation      Only run KML elevation profile extraction
   --course <id>    Only process specified course id
+  --elevation-source <source>  Preferred elevation source: strava, earthengine, opentopo
   --help           Show this help message
 
 Default: runs both description and elevation modes for all courses`);
   process.exit(0);
 }
 
-async function llmParseCourse(rawDescription) {
+async function llmParseCourse(rawDescription, currentIndex, totalCourses) {
   if (!rawDescription) {
     return {
       terrain: 'Unspecified',
@@ -113,7 +122,12 @@ ${safeDescription}
             const parsed = JSON.parse(content);
             console.log(`  ✅ Gemini successfully parsed:`, parsed);
             // Gemini free tier requires 62 second minimum delay between requests (April 2026)
-            await new Promise(r => setTimeout(r, 62000));
+            // Only delay if there is another course to process after this one
+            if (RUN_DESCRIPTION && !TEST_SINGLE_COURSE && currentIndex !== undefined && totalCourses !== undefined) {
+              if (currentIndex < totalCourses - 1) {
+                await new Promise(r => setTimeout(r, 62000));
+              }
+            }
             return parsed;
           } catch (parseError) {
             console.log(`  ❌ Gemini JSON parse failed:`, parseError.message);
@@ -196,12 +210,14 @@ function cleanDescription(text) {
 import ee from '@google/earthengine';
 
 // Auth is reused across batches — only authenticate once
+let eeInitializingPromise = null;
 let eeInitialized = false;
 
 async function ensureEarthEngineAuth() {
   if (eeInitialized) return;
+  if (eeInitializingPromise) return eeInitializingPromise;
 
-  await new Promise((resolve, reject) => {
+  eeInitializingPromise = new Promise((resolve, reject) => {
     const privateKey = {
       client_email: EARTHENGINE_CLIENT_EMAIL,
       private_key: EARTHENGINE_PRIVATE_KEY.replace(/\\n/g, '\n'),
@@ -219,6 +235,8 @@ async function ensureEarthEngineAuth() {
       reject
     );
   });
+
+  return eeInitializingPromise;
 }
 
 async function getElevationFromEarthEngine(points) {
@@ -252,16 +270,19 @@ async function getElevationFromEarthEngine(points) {
       )
     );
 
-    const sampled = await new Promise((resolve, reject) => {
-      dem.reduceRegions({
-        collection: featureCollection,
-        reducer: ee.Reducer.first(),
-        scale: 5,
-      }).evaluate((result, err) => {
-        if (err) reject(new Error(String(err)));
-        else resolve(result);
-      });
-    });
+    const sampled = await Promise.race([
+      new Promise((resolve, reject) => {
+        dem.reduceRegions({
+          collection: featureCollection,
+          reducer: ee.Reducer.first(),
+          scale: 5,
+        }).evaluate((result, err) => {
+          if (err) reject(new Error(String(err)));
+          else resolve(result);
+        });
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Earth Engine request timed out after 90s')), 90000))
+    ]);
 
     // Map results back by index to preserve original point order
     const elevationMap = {};
@@ -335,8 +356,8 @@ async function getStravaSegmentForCourse(lat, lon) {
   const accessToken = await getStravaAccessToken();
   if (!accessToken) return null;
 
-  // 1.5km bounding box around course centre
-  const offset = 0.014; // approx 1.5km
+  // 800m bounding box around course centre
+  const offset = 0.008; // approx 800m
   const bounds = `${lat - offset},${lon - offset},${lat + offset},${lon + offset}`;
 
   try {
@@ -352,7 +373,7 @@ async function getStravaSegmentForCourse(lat, lon) {
         const candidates = data.segments.filter(s => 
           s.distance >= 4000 && 
           s.distance <= 6000 &&
-          /park\s?run/i.test(s.name)
+          /park\W*run/i.test(s.name)
         );
         
         if (candidates.length > 0) {
@@ -361,7 +382,11 @@ async function getStravaSegmentForCourse(lat, lon) {
           const best = candidates[0];
           
           console.log(`  ✅ Found Strava segment: ${best.name} (${Math.round(best.distance)}m)`);
-          console.log(`  ✅ Strava native elevation: +${best.elev_gain}m gain`);
+          if (best.elev_gain !== undefined && best.elev_gain !== null && !isNaN(best.elev_gain)) {
+            console.log(`  ✅ Strava native elevation: +${Math.round(best.elev_gain)}m gain`);
+          } else {
+            console.log(`  ℹ️  Strava segment has no elevation gain data`);
+          }
           
           // Decode polyline
           const decoded = polyline.decode(best.points);
@@ -422,54 +447,135 @@ async function getStravaSegmentForCourse(lat, lon) {
   }
 }
 
+function interpolateNullElevations(elevations) {
+  const result = [...elevations];
+  
+  // Forward pass
+  let lastValid = null;
+  for (let i = 0; i < result.length; i++) {
+    if (result[i] !== null && !isNaN(result[i])) {
+      lastValid = result[i];
+    } else if (lastValid !== null) {
+      result[i] = lastValid;
+    }
+  }
+  
+  // Backward pass
+  lastValid = null;
+  for (let i = result.length - 1; i >= 0; i--) {
+    if (result[i] !== null && !isNaN(result[i])) {
+      lastValid = result[i];
+    } else if (lastValid !== null) {
+      result[i] = lastValid;
+    }
+  }
+  
+  // Linear interpolate gaps properly
+  let i = 0;
+  while (i < result.length) {
+    if (result[i] === null) {
+      let left = i - 1;
+      let right = i + 1;
+      
+      while (left >= 0 && result[left] === null) left--;
+      while (right < result.length && result[right] === null) right++;
+      
+      if (left >= 0 && right < result.length) {
+        const distance = right - left;
+        for (let j = left + 1; j < right; j++) {
+          const t = (j - left) / distance;
+          result[j] = Math.round(result[left] + (result[right] - result[left]) * t);
+        }
+        i = right;
+        continue;
+      }
+    }
+    i++;
+  }
+  
+  return result;
+}
+
 async function getElevationForPoints(points) {
   const batches = [];
   for (let i = 0; i < points.length; i += 100) {
     batches.push(points.slice(i, i + 100));
   }
 
+  // Build source order according to preference
+  let sources = ['earthengine', 'opentopo'];
+  
+  if (ELEVATION_SOURCE === 'earthengine') {
+    sources = ['earthengine', 'strava', 'opentopo'];
+  } else if (ELEVATION_SOURCE === 'opentopo') {
+    sources = ['opentopo', 'strava', 'earthengine'];
+  }
+
+  if (ELEVATION_SOURCE) {
+    console.log(`  🎯 Using preferred elevation source order: ${sources.join(' → ')}`);
+  }
+
   const allElevations = [];
 
   for (const batch of batches) {
-    // 🔴 PRIMARY: Try Google Earth Engine GA LiDAR first
-    const eeResults = await getElevationFromEarthEngine(batch);
-    
-    if (eeResults) {
-      eeResults.forEach(elev => allElevations.push(elev));
-      await new Promise(r => setTimeout(r, 300));
-      continue;
-    }
+    for (const source of sources) {
+      if (source === 'earthengine') {
+        // 🔴 Try Google Earth Engine GA LiDAR
+        const eeResults = await getElevationFromEarthEngine(batch);
+        
+        if (eeResults) {
+          eeResults.forEach(elev => allElevations.push(elev));
+          // Only delay if there are more batches to process
+          const batchIndex = batches.indexOf(batch);
+          if (batchIndex < batches.length - 1) {
+            await new Promise(r => setTimeout(r, 300));
+          }
+          break;
+        }
+      }
 
-    // 🟡 FALLBACK: OpenTopoData SRTM
-    console.log(`  📡 Falling back to OpenTopoData for ${batch.length} points`);
-    const locations = batch.map(p => `${p.lat},${p.lon}`).join('|');
-    try {
-      const res = await fetch(`https://api.opentopodata.org/v1/srtm90m?locations=${locations}`);
-      console.log(`  📡 OpenTopoData status: ${res.status} ${res.statusText}`);
-      
-      const text = await res.text();
-      
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (jsonError) {
-        console.log(`  ❌ Invalid JSON response: ${jsonError.message}`);
-        continue;
+      if (source === 'opentopo') {
+        // 🟡 Try OpenTopoData SRTM
+        console.log(`  📡 Trying OpenTopoData for ${batch.length} points`);
+        const locations = batch.map(p => `${p.lat},${p.lon}`).join('|');
+        try {
+          const res = await fetch(`https://api.opentopodata.org/v1/srtm90m?locations=${locations}`);
+          console.log(`  📡 OpenTopoData status: ${res.status} ${res.statusText}`);
+          
+          const text = await res.text();
+          
+          let data;
+          try {
+            data = JSON.parse(text);
+          } catch (jsonError) {
+            console.log(`  ❌ Invalid JSON response: ${jsonError.message}`);
+            continue;
+          }
+          
+          if (data.results) {
+            console.log(`  ✅ Got ${data.results.length} elevation results`);
+            data.results.forEach(r => allElevations.push(Math.round(r.elevation)));
+            await new Promise(r => setTimeout(r, 1200));
+            break;
+          } else if (data.error) {
+            console.log(`  ❌ API error: ${data.error}`);
+          }
+        } catch (e) {
+          console.log(`⚠️  Elevation batch failed: ${e.message}`);
+        }
       }
-      
-      if (data.results) {
-        console.log(`  ✅ Got ${data.results.length} elevation results`);
-        data.results.forEach(r => allElevations.push(Math.round(r.elevation)));
-      } else if (data.error) {
-        console.log(`  ❌ API error: ${data.error}`);
-      }
-      await new Promise(r => setTimeout(r, 1200));
-    } catch (e) {
-      console.log(`⚠️  Elevation batch failed: ${e.message}`);
     }
   }
 
-  return allElevations;
+  // Interpolate any remaining null points
+  const filledElevations = interpolateNullElevations(allElevations);
+  
+  const invalidCount = filledElevations.filter(e => e === null).length;
+  if (invalidCount > 0) {
+    console.log(`  ℹ️  Interpolated ${invalidCount} null elevation points`);
+  }
+
+  return filledElevations;
 }
 
 function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -649,9 +755,9 @@ function removeElevationOutliers(elevations, thresholdMeters = 10) {
 function calculateElevationProfile(elevations) {
   if (!elevations || elevations.length < 2) return { gain: 0, loss: 0, min: 0, max: 0 };
 
-  // Apply smoothing and outlier removal for more accurate gain/loss
-  let processedElevations = smoothElevation(elevations, 5);
-  processedElevations = removeElevationOutliers(processedElevations, 10);
+  // Correct order: remove outliers first, THEN smooth
+  let processedElevations = removeElevationOutliers(elevations, 10);
+  processedElevations = smoothElevation(processedElevations, 3); // Reduced window from 5 → 3
 
   let gain = 0;
   let loss = 0;
@@ -659,23 +765,23 @@ function calculateElevationProfile(elevations) {
 
   for (let i = 1; i < processedElevations.length; i++) {
     const diff = processedElevations[i] - prev;
-    if (diff > 1) gain += diff; // Ignore tiny <1m changes which are just sensor noise
-    if (diff < -1) loss += Math.abs(diff);
+    if (diff > 0.5) gain += diff; // Reduced threshold from 1m → 0.5m
+    if (diff < -0.5) loss += Math.abs(diff);
     prev = processedElevations[i];
   }
 
   return {
     gain: Math.round(gain),
     loss: Math.round(loss),
-    min: Math.min(...processedElevations),
-    max: Math.max(...processedElevations)
+    min: Math.round(Math.min(...processedElevations)),
+    max: Math.round(Math.max(...processedElevations))
   };
 }
 
 import unzipper from 'unzipper';
 import polyline from '@mapbox/polyline';
 
-async function processCourse(course, eventData) {
+async function processCourse(course, eventData, processedCourses, totalToProcess) {
   console.log(`\n🔄 Processing: ${course.name} (${course.id})`);
 
   const courseHtmlPath = path.join(RAW_DATA_DIR, course.id, `${course.id}.html`);
@@ -708,7 +814,7 @@ async function processCourse(course, eventData) {
         console.log(`  ✅ Extracted ${enriched.rawDescription.length} chars of course description`);
         
         // Always reprocess LLM every run
-        const llmResult = await llmParseCourse(enriched.rawDescription);
+        const llmResult = await llmParseCourse(enriched.rawDescription, processedCourses.length, totalToProcess);
         enriched.terrain = llmResult.terrain;
         enriched.courseDescription = llmResult.description;
         
@@ -733,7 +839,85 @@ async function processCourse(course, eventData) {
 
       // Always try Strava segments FIRST (better quality, more accurate paths)
       if (enriched.latitude && enriched.longitude && RUN_ELEVATION) {
-        const stravaResult = await getStravaSegmentForCourse(enriched.latitude, enriched.longitude);
+        let stravaResult = null;
+        
+        // If manual Strava segment ID is already set, use that directly
+        if (enriched.stravaSegmentId) {
+          console.log(`  ✅ Using manual Strava segment ID: ${enriched.stravaSegmentId}`);
+          try {
+            const accessToken = await getStravaAccessToken();
+            if (accessToken) {
+              console.log(`  📡 Fetching Strava segment ${enriched.stravaSegmentId}`);
+              const segmentRes = await fetch(`https://www.strava.com/api/v3/segments/${enriched.stravaSegmentId}`, {
+                headers: { 'Authorization': `Bearer ${accessToken}` }
+              });
+              
+              if (segmentRes.ok) {
+                const best = await segmentRes.json();
+                console.log(`  ✅ Found Strava segment: ${best.name} (${Math.round(best.distance)}m)`);
+                if (best.elev_gain !== undefined && best.elev_gain !== null && !isNaN(best.elev_gain)) {
+                  console.log(`  ✅ Strava native elevation: +${Math.round(best.elev_gain)}m gain`);
+                }
+                
+                // Decode polyline from map.polyline (always present on modern Strava API)
+                const polylineStr = best.map?.polyline || best.points;
+                const decoded = polyline.decode(polylineStr);
+                const points = decoded.map(([lat, lon]) => ({ lat, lon }));
+                
+                // Also fetch elevation stream for this segment
+                try {
+                  console.log(`  📡 Fetching Strava elevation stream for segment ${best.id}`);
+                  const streamRes = await fetch(`https://www.strava.com/api/v3/segments/${best.id}/streams/altitude?resolution=high`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                  });
+                  
+                  if (streamRes.ok) {
+                    const streamData = await streamRes.json();
+                    const altitudeStream = Array.isArray(streamData) ? streamData.find(s => s.type === 'altitude') : null;
+                    
+                    if (altitudeStream && altitudeStream.data && Array.isArray(altitudeStream.data) && altitudeStream.data.length >= 10) {
+                      console.log(`  ✅ Got ${altitudeStream.data.length} native elevation points from Strava`);
+                      
+                      // Resample Strava elevation to exactly ELEVATION_POINTS
+                      const stravaElevations = [];
+                      const elevationCount = altitudeStream.data.length;
+                      
+                      for (let i = 0; i < ELEVATION_POINTS; i++) {
+                        const idx = Math.round((i / (ELEVATION_POINTS - 1)) * (elevationCount - 1));
+                        stravaElevations.push(Math.round(altitudeStream.data[idx]));
+                      }
+          
+                      stravaResult = {
+                        id: best.id,
+                        points: points,
+                        elevations: stravaElevations,
+                        elevationGain: Math.round(best.elev_gain)
+                      };
+                    }
+                  }
+                } catch (streamErr) {
+                  console.log(`  ⚠️  Failed to get Strava elevation stream: ${streamErr.message}`);
+                }
+                
+                // Fallback if elevation stream not available
+                if (!stravaResult) {
+                  stravaResult = { 
+                    id: best.id,
+                    points: points 
+                  };
+                }
+              }
+            }
+          } catch (e) {
+            console.log(`  ⚠️  Manual Strava segment lookup failed: ${e.message}`);
+            stravaResult = null;
+          }
+        }
+        
+        // If no manual segment ID or lookup failed, try normal search
+        if (!stravaResult) {
+          stravaResult = await getStravaSegmentForCourse(enriched.latitude, enriched.longitude);
+        }
         
         if (stravaResult) {
           const { id: stravaSegmentId, points: stravaPoints, elevations: stravaElevations, elevationGain } = stravaResult;
@@ -750,8 +934,9 @@ async function processCourse(course, eventData) {
             // Store the actual course path coordinates first
             enriched.coursePath = resampled.map(p => [p.lat, p.lon]);
 
-            // Use native Strava elevation if available (PRIMARY SOURCE)
-            if (stravaElevations && stravaElevations.length >= 90) {
+            // Use native Strava elevation only if allowed by source preference
+            if (stravaElevations && stravaElevations.length >= 90 && 
+                (!ELEVATION_SOURCE || ELEVATION_SOURCE === 'strava')) {
               console.log(`  ✅ Using native Strava elevation data`);
               enriched.elevationProfile = stravaElevations;
               
@@ -946,6 +1131,14 @@ async function run() {
   const outputCourses = [];
   const processedCourses = [];
 
+  // Calculate actual number of courses that will be processed
+  let totalToProcess = 0;
+  for (let i = 0; i < courses.length; i++) {
+    if (!COURSE_ID || courses[i].id === COURSE_ID) {
+      totalToProcess++;
+    }
+  }
+
   for (let i = 0; i < courses.length; i++) {
     const course = courses[i];
     
@@ -955,7 +1148,7 @@ async function run() {
       continue;
     }
 
-    const enriched = await processCourse(course, eventData);
+    const enriched = await processCourse(course, eventData, processedCourses, totalToProcess);
     outputCourses.push(enriched);
     processedCourses.push(enriched);
     
@@ -968,7 +1161,7 @@ async function run() {
   // Write back updated courses
   await fs.writeJson(COURSES_JSON_PATH, outputCourses, { spaces: 2 });
 
-  console.log(`\n✅ Complete! Updated ${outputCourses.length} courses`);
+  console.log(`\n✅ Complete! Updated ${processedCourses.length} courses`);
   console.log(`💾 Saved to ${COURSES_JSON_PATH}`);
 
   console.log(`\n📋 Processed courses (${processedCourses.length}):`);
@@ -987,6 +1180,10 @@ async function run() {
       console.log(`   ℹ️  ${course.courseDescription}`);
     }
   });
+
+  // Force process exit to work around Earth Engine client hanging
+  // EE client keeps persistent HTTP connections alive which prevent Node from exiting
+  process.exit(0);
 }
 
 run().catch(err => {

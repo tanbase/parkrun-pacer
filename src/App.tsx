@@ -56,6 +56,198 @@ export default function App() {
   const [elevationHoverIdx, setElevationHoverIdx] = useState<number>(-1);
   const elevationSvgRef = useRef<SVGSVGElement>(null);
   const [svgViewBoxWidth, setSvgViewBoxWidth] = useState(792);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+
+  // Handle Leaflet map initialization and cleanup when selectedResult changes
+  useEffect(() => {
+    if (!selectedResult?.parkrun?.coursePath || !mapContainerRef.current) {
+      return;
+    }
+
+    const L = (window as any).L;
+    if (!L) {
+      console.error('Leaflet not loaded');
+      return;
+    }
+
+    // Cleanup existing map instance
+    if ((window as any)._mapInstance) {
+      (window as any)._mapInstance.remove();
+      (window as any)._mapInstance = null;
+    }
+    if ((window as any)._courseMarker) {
+      (window as any)._courseMarker = null;
+    }
+    if ((window as any)._polyline) {
+      (window as any)._polyline = null;
+    }
+    if ((window as any)._originalBounds) {
+      (window as any)._originalBounds = null;
+    }
+    if ((window as any)._satelliteLayer) {
+      (window as any)._satelliteLayer = null;
+    }
+    if ((window as any)._mapLayer) {
+      (window as any)._mapLayer = null;
+    }
+    if ((window as any)._labelsLayer) {
+      (window as any)._labelsLayer = null;
+    }
+
+    // Clear the container
+    const container = mapContainerRef.current;
+    container.innerHTML = '';
+
+    // Create new map
+    const map = L.map(container).setView(selectedResult.parkrun.coursePath[0], 15);
+    (window as any)._mapInstance = map;
+
+    // ESRI World Imagery - best free satellite imagery
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+      maxZoom: 19
+    }).addTo(map);
+
+    // OpenStreetMap labels overlay - road names, places, landmarks
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap contributors',
+      opacity: 0.8,
+      maxZoom: 19,
+      pane: 'markerPane'
+    }).addTo(map);
+
+    // Draw course path
+    const polyline = L.polyline(selectedResult.parkrun.coursePath, {
+      color: '#00cc00',
+      weight: 5,
+      opacity: 0.8
+    }).addTo(map);
+
+    // Start marker (green)
+    L.circleMarker(selectedResult.parkrun.coursePath[0], {
+      radius: 6,
+      fillColor: '#00ff00',
+      color: '#ffffff',
+      weight: 2,
+      fillOpacity: 1
+    }).bindTooltip('Start').addTo(map);
+
+    // Finish marker (red)
+    L.circleMarker(selectedResult.parkrun.coursePath[selectedResult.parkrun.coursePath.length - 1], {
+      radius: 6,
+      fillColor: '#ff0000',
+      color: '#ffffff',
+      weight: 2,
+      fillOpacity: 1
+    }).bindTooltip('Finish').addTo(map);
+
+    // Fit map to show entire course
+    map.fitBounds(polyline.getBounds(), { padding: [30, 30] });
+
+    // Store original bounds for reset button
+    (window as any)._originalBounds = polyline.getBounds();
+    (window as any)._polyline = polyline;
+
+    // Store layer references
+    (window as any)._satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+      maxZoom: 19
+    });
+
+    (window as any)._mapLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors',
+      maxZoom: 19
+    });
+
+    (window as any)._labelsLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap contributors',
+      opacity: 0.8,
+      maxZoom: 19,
+      pane: 'markerPane'
+    }).addTo(map);
+
+    // Add toggle buttons
+    const Control = L.Control.extend({
+      options: { position: 'topright' },
+      onAdd: function () {
+        const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+        
+        // Reset view button
+        const resetBtn = L.DomUtil.create('a', '', container);
+        resetBtn.innerHTML = '⟲';
+        resetBtn.title = 'Reset view';
+        resetBtn.style.padding = '5px 8px';
+        resetBtn.style.fontSize = '14px';
+        resetBtn.href = '#';
+        L.DomEvent.on(resetBtn, 'click', (e: Event) => {
+          L.DomEvent.stopPropagation(e);
+          L.DomEvent.preventDefault(e);
+          map.fitBounds((window as any)._originalBounds, { padding: [30, 30] });
+        });
+        
+        // Toggle course line button
+        const lineBtn = L.DomUtil.create('a', '', container);
+        lineBtn.innerHTML = '━';
+        lineBtn.title = 'Toggle course path';
+        lineBtn.style.padding = '5px 8px';
+        lineBtn.style.fontSize = '14px';
+        lineBtn.href = '#';
+        L.DomEvent.on(lineBtn, 'click', (e: Event) => {
+          L.DomEvent.stopPropagation(e);
+          L.DomEvent.preventDefault(e);
+          if ((window as any)._polyline) {
+            if (map.hasLayer((window as any)._polyline)) {
+              map.removeLayer((window as any)._polyline);
+            } else {
+              map.addLayer((window as any)._polyline);
+            }
+          }
+        });
+
+        // Toggle satellite / map view
+        const layerBtn = L.DomUtil.create('a', '', container);
+        layerBtn.innerHTML = '🗺';
+        layerBtn.title = 'Toggle Satellite / Map view';
+        layerBtn.style.padding = '5px 8px';
+        layerBtn.style.fontSize = '14px';
+        layerBtn.href = '#';
+        
+        // Track current layer state manually instead of relying on map.hasLayer()
+        let satelliteActive = true;
+        
+        L.DomEvent.on(layerBtn, 'click', (e: Event) => {
+          L.DomEvent.stopPropagation(e);
+          L.DomEvent.preventDefault(e);
+          if (satelliteActive) {
+            map.removeLayer((window as any)._satelliteLayer);
+            map.addLayer((window as any)._mapLayer);
+            satelliteActive = false;
+          } else {
+            map.removeLayer((window as any)._mapLayer);
+            map.addLayer((window as any)._satelliteLayer);
+            satelliteActive = true;
+          }
+        });
+
+        container.style.background = 'white';
+        container.style.borderRadius = '4px';
+        container.style.boxShadow = '0 1px 5px rgba(0,0,0,0.4)';
+        return container;
+      }
+    });
+    map.addControl(new Control());
+
+    // Cleanup on unmount or when selectedResult changes
+    return () => {
+      if ((window as any)._mapInstance) {
+        (window as any)._mapInstance.remove();
+        (window as any)._mapInstance = null;
+      }
+      if ((window as any)._courseMarker) {
+        (window as any)._courseMarker = null;
+      }
+    };
+  }, [selectedResult]);
 
   useEffect(() => {
     setSelectedDetailsMonth(selectedMonth);
@@ -772,7 +964,9 @@ export default function App() {
                     const rect = e.currentTarget.getBoundingClientRect();
                     const x = e.clientX - rect.left;
                     const ratio = Math.max(0, Math.min(1, x / rect.width));
-                    const idx = Math.min(Math.max(Math.round(ratio * 99), 0), 99);
+                    const elevations = selectedResult.parkrun.elevationProfile || [];
+                    const maxIdx = Math.max(0, elevations.length - 1);
+                    const idx = Math.min(Math.max(Math.round(ratio * maxIdx), 0), maxIdx);
                     
                     setElevationHoverIdx(idx);
                     
@@ -801,11 +995,49 @@ export default function App() {
                   }}
                 >
                   {(() => {
-                    // Safe fallback when elevation profile doesn't exist
-                    const elevations = selectedResult.parkrun.elevationProfile || Array(100).fill(selectedResult.parkrun.elevation || 0);
-                    const min = Math.min(...elevations);
-                    const max = Math.max(...elevations);
-                    const range = Math.max(max - min, 1);
+                     // Safe fallback when elevation profile doesn't exist
+                     const rawElevations = selectedResult.parkrun.elevationProfile || Array(100).fill(selectedResult.parkrun.elevation || 0);
+                     
+                     // ✅ Chaikin's Corner Cutting Algorithm
+                     // Perfect for this case: rounds sharp corners naturally, NO overshoot, NO artifacts
+                     // Purely visual smoothing - all original elevation values are preserved exactly
+                     let points = rawElevations.map((e, i) => ({ x: i, y: e }));
+                     
+                     // Run 2 iterations of Chaikin smoothing
+                     for (let iter = 0; iter < 2; iter++) {
+                       const newPoints: {x: number, y: number}[] = [];
+                       
+                       for (let i = 0; i < points.length - 1; i++) {
+                         const p0 = points[i];
+                         const p1 = points[i + 1];
+                         
+                         // Chaikin's 1/4 and 3/4 cut points
+                         newPoints.push({
+                           x: p0.x + 0.25 * (p1.x - p0.x),
+                           y: p0.y + 0.25 * (p1.y - p0.y)
+                         });
+                         
+                         newPoints.push({
+                           x: p0.x + 0.75 * (p1.x - p0.x),
+                           y: p0.y + 0.75 * (p1.y - p0.y)
+                         });
+                       }
+                       
+                       points = newPoints;
+                     }
+                     
+                     // Map back to x coordinate space
+                     const elevations: number[] = [];
+                     const maxX = points[points.length - 1].x;
+                     
+                     for (let i = 0; i < points.length; i++) {
+                       elevations.push(points[i].y);
+                     }
+                     
+                     // Keep min/max calculations using original raw data for accurate statistics
+                     const min = Math.min(...rawElevations);
+                     const max = Math.max(...rawElevations);
+                     const range = Math.max(max - min, 10); // Minimum 10m range so very flat courses don't look like mountains
                     const hoverIdx = elevationHoverIdx;
                     
                     // Create area path
@@ -813,7 +1045,7 @@ export default function App() {
                     let linePath = `M 0 ${110 - ((elevations[0] - min) / range) * 90} `;
                     
                     elevations.forEach((e, i) => {
-                      const x = i * (svgViewBoxWidth / 99);
+                      const x = i * (svgViewBoxWidth / (elevations.length - 1));
                       const y = 110 - ((e - min) / range) * 90;
                       areaPath += `L ${x} ${y} `;
                       linePath += `L ${x} ${y} `;
@@ -847,16 +1079,16 @@ export default function App() {
                         {hoverIdx >= 0 && (
                           <>
                             <line 
-                              x1={hoverIdx * (svgViewBoxWidth / 99)} 
+                              x1={hoverIdx * (svgViewBoxWidth / (rawElevations.length - 1))} 
                               y1="10" 
-                              x2={hoverIdx * (svgViewBoxWidth / 99)} 
+                              x2={hoverIdx * (svgViewBoxWidth / (rawElevations.length - 1))} 
                               y2="110" 
                               stroke="#000000" 
                               strokeWidth="1.5" 
                               opacity="0.8"
                             />
                             <rect 
-                              x={Math.min(hoverIdx * (svgViewBoxWidth / 99), svgViewBoxWidth - 82)} 
+                              x={Math.min(hoverIdx * (svgViewBoxWidth / (rawElevations.length - 1)), svgViewBoxWidth - 82)} 
                               y="8" 
                               width="80" 
                               height="18" 
@@ -865,14 +1097,14 @@ export default function App() {
                               opacity="0.8"
                             />
                             <text 
-                              x={Math.min(hoverIdx * (svgViewBoxWidth / 99) + 40, svgViewBoxWidth - 42)} 
+                              x={Math.min(hoverIdx * (svgViewBoxWidth / (rawElevations.length - 1)) + 40, svgViewBoxWidth - 42)} 
                               y="21" 
                               textAnchor="middle" 
                               fill="#ffffff" 
                               fontSize="11"
                               fontWeight="500"
                             >
-                              {(hoverIdx * 50).toFixed(0)}m • {elevations[hoverIdx]}m
+                               {Math.round(hoverIdx * 5000 / (rawElevations.length - 1))}m • {Math.round(rawElevations[hoverIdx])}m
                             </text>
                           </>
                         )}
@@ -895,168 +1127,19 @@ export default function App() {
 
             {/* Course Map */}
             <div>
-              <h4 className="font-bold mb-2">Course Map</h4>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-bold">Course Map</h4>
+                {selectedResult.parkrun.stravaSegmentId && (
+                  <a href={`https://www.strava.com/segments/${selectedResult.parkrun.stravaSegmentId}`} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">
+                    View Strava segment →
+                  </a>
+                )}
+              </div>
               
               {selectedResult.parkrun.coursePath && selectedResult.parkrun.coursePath.length > 0 ? (
                 <div 
-                  ref={(el) => {
-                    if (!el) return;
-
-                    // Guard against double initialisation in React strict mode
-                    if ((window as any)._mapInstance) {
-                      return;
-                    }
-                    
-                    setTimeout(() => {
-                      // Double check we haven't already initialised
-                      if ((window as any)._mapInstance) {
-                        return;
-                      }
-
-                      const L = (window as any).L;
-                      
-                      const map = L.map(el).setView(selectedResult.parkrun.coursePath[0], 15);
-                      (window as any)._mapInstance = map;
-                      
-                      // ESRI World Imagery - best free satellite imagery
-                      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                        attribution: 'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
-                        maxZoom: 19
-                      }).addTo(map);
-
-                      // OpenStreetMap labels overlay - road names, places, landmarks
-                      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', {
-                        attribution: '© OpenStreetMap contributors',
-                        opacity: 0.8,
-                        maxZoom: 19,
-                        pane: 'markerPane'
-                      }).addTo(map);
-                      
-                      // Draw course path
-                      const polyline = L.polyline(selectedResult.parkrun.coursePath, {
-                        color: '#00cc00',
-                        weight: 5,
-                        opacity: 0.8
-                      }).addTo(map);
-                      
-                      // Start marker (green)
-                      L.circleMarker(selectedResult.parkrun.coursePath[0], {
-                        radius: 6,
-                        fillColor: '#00ff00',
-                        color: '#ffffff',
-                        weight: 2,
-                        fillOpacity: 1
-                      }).bindTooltip('Start').addTo(map);
-                      
-                      // Finish marker (red)
-                      L.circleMarker(selectedResult.parkrun.coursePath[selectedResult.parkrun.coursePath.length - 1], {
-                        radius: 6,
-                        fillColor: '#ff0000',
-                        color: '#ffffff',
-                        weight: 2,
-                        fillOpacity: 1
-                      }).bindTooltip('Finish').addTo(map);
-                      
-                      // Fit map to show entire course
-                      map.fitBounds(polyline.getBounds(), { padding: [30, 30] });
-                      
-                      // Store original bounds for reset button
-                      (window as any)._originalBounds = polyline.getBounds();
-                      (window as any)._polyline = polyline;
-                      
-                      // Store layer references
-                      (window as any)._satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                        attribution: 'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
-                        maxZoom: 19
-                      });
-                      
-                      (window as any)._mapLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                        attribution: '© OpenStreetMap contributors',
-                        maxZoom: 19
-                      });
-                      
-                      (window as any)._labelsLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', {
-                        attribution: '© OpenStreetMap contributors',
-                        opacity: 0.8,
-                        maxZoom: 19,
-                        pane: 'markerPane'
-                      }).addTo(map);
-
-                      // Add toggle buttons
-                      const Control = L.Control.extend({
-                        options: { position: 'topright' },
-                        onAdd: function () {
-                          const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
-                          
-                          // Reset view button
-                          const resetBtn = L.DomUtil.create('a', '', container);
-                          resetBtn.innerHTML = '⟲';
-                          resetBtn.title = 'Reset view';
-                          resetBtn.style.padding = '5px 8px';
-                          resetBtn.style.fontSize = '14px';
-                          resetBtn.href = '#';
-                          L.DomEvent.on(resetBtn, 'click', (e: Event) => {
-                            L.DomEvent.stopPropagation(e);
-                            L.DomEvent.preventDefault(e);
-                            map.fitBounds((window as any)._originalBounds, { padding: [30, 30] });
-                          });
-                          
-                          // Toggle course line button
-                          const lineBtn = L.DomUtil.create('a', '', container);
-                          lineBtn.innerHTML = '━';
-                          lineBtn.title = 'Toggle course path';
-                          lineBtn.style.padding = '5px 8px';
-                          lineBtn.style.fontSize = '14px';
-                          lineBtn.href = '#';
-                          L.DomEvent.on(lineBtn, 'click', (e: Event) => {
-                            L.DomEvent.stopPropagation(e);
-                            L.DomEvent.preventDefault(e);
-                            if ((window as any)._polyline) {
-                              if (map.hasLayer((window as any)._polyline)) {
-                                map.removeLayer((window as any)._polyline);
-                              } else {
-                                map.addLayer((window as any)._polyline);
-                              }
-                            }
-                          });
-
-                          // Toggle satellite / map view
-                          const layerBtn = L.DomUtil.create('a', '', container);
-                          layerBtn.innerHTML = '🗺';
-                          layerBtn.title = 'Toggle Satellite / Map view';
-                          layerBtn.style.padding = '5px 8px';
-                          layerBtn.style.fontSize = '14px';
-                          layerBtn.href = '#';
-                          
-                          // Track current layer state manually instead of relying on map.hasLayer()
-                          let satelliteActive = true;
-                          
-                          L.DomEvent.on(layerBtn, 'click', (e: Event) => {
-                            L.DomEvent.stopPropagation(e);
-                            L.DomEvent.preventDefault(e);
-                            if (satelliteActive) {
-                              map.removeLayer((window as any)._satelliteLayer);
-                              map.addLayer((window as any)._mapLayer);
-                              satelliteActive = false;
-                            } else {
-                              map.removeLayer((window as any)._mapLayer);
-                              map.addLayer((window as any)._satelliteLayer);
-                              satelliteActive = true;
-                            }
-                          });
-
-
-                          container.style.background = 'white';
-                          container.style.borderRadius = '4px';
-                          container.style.boxShadow = '0 1px 5px rgba(0,0,0,0.4)';
-                          return container;
-                        }
-                      });
-                      map.addControl(new Control());
-                      
-                    }, 0);
-                  }}
-                  className="w-full aspect-video rounded-lg border z-0"
+                  ref={mapContainerRef}
+                  className="w-full h-[460px] rounded-lg border z-0"
                 />
               ) : (
                 <div className="w-full aspect-video rounded-lg border overflow-hidden">

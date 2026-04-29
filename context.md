@@ -41,34 +41,6 @@ Parses raw course pages, extracts:
 ✅ **429 Retry delay:** 65 seconds
 ✅ **Automatic fallback:** Groq Llama 3.3 70b after 2 failed attempts
 
-**Usage:**
-```bash
-node scripts/enrich-courses.js
-node scripts/enrich-courses.js --course albertmelbourne
-node scripts/enrich-courses.js --description
-```
-
----
-
-## Setup Instructions
-
-1. Install dependencies:
-```bash
-npm install
-```
-
-2. Create `.env` file in project root:
-```
-GEMINI_API_KEY=your_google_api_key
-GROQ_API_KEY=your_groq_api_key
-```
-
-3. Run enrichment script:
-```bash
-node scripts/enrich-courses.js
-```
-
----
 
 ## Known Issues & Workarounds
 
@@ -77,6 +49,7 @@ node scripts/enrich-courses.js
 | Gemini 429 after 1 request | ✅ Fixed | 62s delay implemented |
 | Hardcoded API keys | ✅ Fixed | Using dotenv environment variables |
 | KML path only extracts first 2.5km | ✅ Fixed | Automatic path extension to 5km |
+| Leaflet map doesn't update when selecting different course | ✅ Fixed | Use useEffect with selectedResult dependency to properly clean up and re-initialize map |
 
 ---
 
@@ -108,26 +81,12 @@ All data enrichment is done offline via node.js scripts. Frontend only consumes 
 ## Course Difficulty Calculation Logic
 
 ### Elevation Profile Analysis
-1.  Extract full 5km KML path from Google Maps
-2.  Resample path to exactly 100 evenly spaced points
-3.  Fetch elevation for each point from OpenTopoData
-4.  Calculate elevation gain/loss by summing all positive/negative differentials between consecutive points
-5.  Remove noise and elevation anomalies
-
-### Course Comparison Formula
-Courses are ranked using normalized difficulty score:
-```
-Difficulty Score = (Elevation Gain * 2.2) + (Elevation Loss * 0.8)
-```
-
-All courses are benchmarked against:
-- 🔵 **Flat:** <30m total gain
-- 🟢 **Easy:** 30-60m gain
-- 🟡 **Moderate:** 60-100m gain
-- 🟠 **Hard:** 100-150m gain
-- 🔴 **Very Hard:** >150m gain
-
-Elevation gain is the single strongest predictor of finish time variance between parkruns.
+1.  Extract full 5km KML path from Google Maps (or use Strava segment)
+2.  Resample path to exactly 200 evenly spaced points (configurable via ELEVATION_POINTS)
+3.  Fetch elevation for each point from Google Earth Engine (LiDAR) or OpenTopoData (SRTM)
+4.  Apply 5-point moving average smoothing to reduce noise
+5.  Remove outliers (>10m deviation from both neighbors)
+6.  Calculate elevation gain/loss by summing all positive/negative differentials between consecutive points
 
 ---
 

@@ -1,0 +1,5 @@
+2026/04/21-23:54:58.713 48d6a8 Creating DB /Users/julian/OneDrive/Code/github/parkrun-pacer/.chrome-profile/Default/Local Storage/leveldb since it was missing.
+2026/04/21-23:54:59.297 48d6a8 Reusing MANIFEST /Users/julian/OneDrive/Code/github/parkrun-pacer/.chrome-profile/Default/Local Storage/leveldb/MANIFEST-000001
+2026/04/22-04:23:43.281 48d6ab Level-0 table #5: started
+2026/04/22-04:23:43.371 48d6ab Level-0 table #5: 7834 bytes OK
+2026/04/22-04:23:43.547 48d6ab Delete type=0 #3

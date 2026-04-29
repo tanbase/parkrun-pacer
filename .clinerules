@@ -3,15 +3,11 @@
 ✅ MANDATORY PRE-TASK CHECKLIST:
 
 1. FIRST STEP: Always read `context.md` file completely before starting ANY task
-2. Review current rate limits, known issues and project state
+2. Review known issues and project state
 3. Verify setup instructions if modifying scripts
 4. Check latest commit history before making changes
 5. Never commit .env file or API keys
 
-✅ Always update context.md when:
-- Rate limits change
-- New issues are discovered
-- Script behaviour is modified
-- New features are added
+✅ Always update context.md upon github commit
 
 This file is automatically loaded at the start of every session.
